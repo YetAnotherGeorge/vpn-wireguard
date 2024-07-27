@@ -16,7 +16,7 @@ import custom_cmd_util as ccu
 import json
 
 def main():
-   #region INIT
+      #region INIT
    PATH_CONF = os.path.realpath("./config.private.json")
    PATH_CONF_TEMPLATE = os.path.realpath("./config.template.json")
    if not os.path.exists(PATH_CONF):
@@ -26,7 +26,7 @@ def main():
       print(f"Fill out {PATH_CONF}, then run this app again.")
       return 0
 
-   conf = json.loads(PATH_CONF)
+   conf = json.loads(ccu.file_read(PATH_CONF))
    SERVER_ADDR = str(conf["server_address"])
    SERVER_PORT = int(conf["server_port"])
    SERVER_PEER_COUNT = int(conf["server_peer_count"])
@@ -42,6 +42,11 @@ def main():
    if ccu.RunCommandContainer("dpkg -l wireguard", True).return_code != 0:
       print(f"Wireguard is not installed")
       ccu.RunCommandContainer("apt install wireguard -y").Check()
+   
+   # Install qrencode
+   if ccu.RunCommandContainer("dpkg -l qrencode", True).return_code != 0:
+      print(f"qrencode is not installed")
+      ccu.RunCommandContainer("apt install qrencode -y").Check()
    
    # FIREWALL (UFW)
    if ccu.RunCommandContainer("dpkg -l ufw", True).return_code != 0:
@@ -78,101 +83,101 @@ def main():
       raise Exception(f"No such default interface: \"{INTERFACE}\"")
    
    # GRAB DNS
-   dns_ip_list = ccu.RunCommandContainer(f"resolvectl dns {default_interface_name}").Check().std_out
+   dns_ip_list = ccu.RunCommandContainer(f"resolvectl dns {INTERFACE}").Check().std_out
    dns_ip_list_match = re.match(r"Link \s* \d \s* \( [^\)]+ \)\:\s* (?P<di> .+? ) $", dns_ip_list, re.X | re.M)
    dns_ip_list = ", ".join( dns_ip_list_match.group("di").split(" ") )
    print(f"DNS IP LIST: \"{dns_ip_list}\"")
-   raise Exception("TEST THIS CHANGE")
+   
+   #region Configure Wireguard
+   ccu.RunCommandContainer("systemctl stop wg-quick@wg0")
+   wireguard_path = "/etc/wireguard"
+   conf_path = os.path.join(wireguard_path, "wg0.conf") # CONF DIR IS COMPLETELY REMOVED ON EVERY RUN
+   private_key_path = os.path.join(wireguard_path, "private.key")
+   public_key_path = os.path.join(wireguard_path, "public.key")
+   if not os.path.exists(wireguard_path):
+      raise Exception(f"wireguard folder missing: {wireguard_path}")
+   print(f"Removing contents of \"{wireguard_path}\" directory...")
+   ccu.clear_directory(wireguard_path)
+   
+   private_key: str = ccu.RunCommandContainer("wg genkey").Check().std_out.strip()
+   public_key: str = ccu.RunCommandContainer(f"bash -c 'echo \"{private_key}\" | wg pubkey'").Check().std_out.strip()
+   ccu.file_write(path=private_key_path, contents=private_key, permission_bits=0o600)
+   ccu.file_write(path=public_key_path, contents=public_key, permission_bits=0o600)
+   print(f"SRV Private Key: {re.sub('.', '*', private_key)} | SRV Public Key: {public_key}")
+   
+   
+   # ip_v4_str.PEER_NUM for ip generation
+   ip_v4_str = "10." + ".".join( str(random.randint(0, 255)) for _ in range(2) )
+   # String of the form fd0d:cd54:a67c -> ip_v6_str::PEER_NUM for ip generation
+   ip_v6_str = "fd00:" + ':'.join( [ ''.join(random.choices('0123456789abcdef', k=4)) for _ in range(2) ] )
+   
+   wg0_conf = f"""
+      [Interface]
+      PrivateKey = {private_key}
+      Address = {ip_v4_str}.1/24, {ip_v6_str}::1/64
+      ListenPort = {SERVER_PORT}
+      SaveConfig = true
+      
+      PostUp = ufw route allow in on wg0 out on {INTERFACE}
+      PostUp = iptables -t nat -I POSTROUTING -o {INTERFACE} -j MASQUERADE
+      PostUp = ip6tables -t nat -I POSTROUTING -o {INTERFACE} -j MASQUERADE
+      
+      PreDown = ufw route delete allow in on wg0 out on {INTERFACE}
+      PreDown = iptables -t nat -D POSTROUTING -o {INTERFACE} -j MASQUERADE
+      PreDown = ip6tables -t nat -D POSTROUTING -o {INTERFACE} -j MASQUERADE
+   """
+   wg0_conf = "\n".join( [l.strip() for l in wg0_conf.splitlines()] ).strip()
+   wg0_conf_print= "\n".join(f"   CONF>  {l}" for l in wg0_conf.replace(private_key, "...PRIVATE_KEY...").splitlines())
+   print(f"Writing config: \n{wg0_conf_print}")
+   ccu.file_write(path=conf_path, contents=wg0_conf)
+   
+   ccu.RunCommandContainer("systemctl enable wg-quick@wg0").Check()
+   ccu.RunCommandContainer("systemctl restart wg-quick@wg0").Check()
+   #endregion
+   
+   #region Configure Wireguard Peers
+   for i in range(1, SERVER_PEER_COUNT + 1, 1):
+      peer_dir = f"/etc/wireguard/peer{i}"
+      peer_conf_path = os.path.join(peer_dir, f"peer{i}-wg0.conf")
+      peer_private_key_path = os.path.join(peer_dir, f"peer{i}-private.key")
+      peer_public_key_path = os.path.join(peer_dir, f"peer{i}-public.key")
+      peer_conf_qr_path = os.path.join(peer_dir, f"peer{i}-conf.qr.ascii.txt")
+      
+      print(f"PEER {i}: creating")
+      os.mkdir(peer_dir)
+      
+      # Public, Private keys
+      peer_private_key = ccu.RunCommandContainer("wg genkey").Check().std_out.strip()
+      peer_public_key = ccu.RunCommandContainer(f"bash -c 'echo \"{peer_private_key}\" | wg pubkey'").Check().std_out.strip()
+      peer_ip4 = f"{ip_v4_str}.{(i+1)}"
+      peer_ip6 = f"{ip_v6_str}::{(i+1)}"
+      ccu.file_write(path=peer_private_key_path, contents=peer_private_key, permission_bits=0o600)
+      ccu.file_write(path=peer_public_key_path, contents=peer_public_key, permission_bits=0o600)
+      
+      # Conf with dns
+      # Note: 0.0.0.0/0, ::/0 means all traffic will must go through the vpn connection
+      # Not specifying the server's dns will cause an ip leak
+      # 0.0.0.0/0, ::/0 also means that the kill switch feature becomes active
+      peer_conf = f"""
+         [Interface]
+         PrivateKey = {peer_private_key}
+         Address = {peer_ip4}/24, {peer_ip6}/64
+         DNS = {dns_ip_list}
+         
+         [Peer]
+         PublicKey = {public_key}
+         AllowedIPs = 0.0.0.0/0, ::/0
+         Endpoint = {SERVER_ADDR}:{SERVER_PORT}
+      """
+      peer_conf = "\n".join( [l.strip() for l in peer_conf.splitlines()] ).strip()
+      peer_conf_print= "\n".join(f"   CONF (P)>  {l}" for l in peer_conf.replace(private_key, "...PRIVATE_KEY...").splitlines())
+      print(f"Writing config: \n{peer_conf_print}")
+      ccu.file_write(path=peer_conf_path, contents=peer_conf, permission_bits=0o600)
+      
+      ccu.RunCommandContainer(f"wg set wg0 peer {peer_public_key} allowed-ips {peer_ip4},{peer_ip6}").Check()
+      ccu.RunCommandContainer(f"qrencode -t ansiutf8 -r \"{peer_conf_path}\" -o \"{peer_conf_qr_path}\"")
+   #endregion
+   
    
 if __name__ == "__main__":
    main()
-   
-   
-   # # region WG-CONFIG
-   # ccu.RunCommandContainer("systemctl stop wg-quick@wg0")
-   # # Write config
-   # wireguard_path = "/etc/wireguard"
-   # conf_path = os.path.join(wireguard_path, "wg0.conf")
-   # private_key_path = os.path.join(wireguard_path, "private.key")
-   # public_key_path = os.path.join(wireguard_path, "public.key")
-   # if not os.path.exists(wireguard_path):
-   #    raise Exception(f"wireguard folder missing: {wireguard_path}")
-   # print(f"Removing contents of \"{wireguard_path}\" directory...")
-   # ccu.clear_directory(wireguard_path)
-   
-   # private_key = ccu.RunCommandContainer("wg genkey").Check().std_out.strip()
-   # public_key = ccu.RunCommandContainer(f"bash -c 'echo \"{private_key}\" | wg pubkey'").Check().std_out.strip()
-   # ccu.file_write(path=private_key_path, contents=private_key, permission_bits=0o600)
-   # ccu.file_write(path=public_key_path, contents=public_key, permission_bits=0o600)
-   # print(f"Private Key: {re.sub('.', '*', private_key)} | Public Key: {public_key}")
-   
-   # # ip_v4_str.PEER_NUM for ip generation
-   # ip_v4_str = "10.8.0"
-   # # String of the form fd0d:cd54:a67c -> ip_v6_str::PEER_NUM for ip generation
-   # ip_v6_str = "fd00:" + ':'.join( [ ''.join(random.choices('0123456789abcdef', k=4)) for _ in range(2) ] )
-   # wg0_conf = f"""
-   #    [Interface]
-   #    PrivateKey = {private_key}
-   #    Address = {ip_v4_str}.1/24, {ip_v6_str}::1/64
-   #    ListenPort = {PORT}
-   #    SaveConfig = true
-      
-   #    PostUp = ufw route allow in on wg0 out on {default_interface_name}
-   #    PostUp = iptables -t nat -I POSTROUTING -o {default_interface_name} -j MASQUERADE
-   #    PostUp = ip6tables -t nat -I POSTROUTING -o {default_interface_name} -j MASQUERADE
-      
-   #    PreDown = ufw route delete allow in on wg0 out on {default_interface_name}
-   #    PreDown = iptables -t nat -D POSTROUTING -o {default_interface_name} -j MASQUERADE
-   #    PreDown = ip6tables -t nat -D POSTROUTING -o {default_interface_name} -j MASQUERADE
-   # """
-   # wg0_conf = "\n".join( [l.strip() for l in wg0_conf.splitlines()] ).strip()
-   # wg0_conf_print= "\n".join(f"   CONF>  {l}" for l in wg0_conf.replace(private_key, "...PRIVATE_KEY...").splitlines())
-   # print(f"Writing config: \n{wg0_conf_print}")
-   # ccu.file_write(path=conf_path, contents=wg0_conf)
-   # # endregion
-   
-   # ccu.RunCommandContainer("systemctl enable wg-quick@wg0").Check()
-   # ccu.RunCommandContainer("systemctl restart wg-quick@wg0").Check()
-   
-   # #region PEERS
-   # for i in range(1, PEER_COUNT + 1, 1):
-   #    peer_dir = f"/etc/wireguard/peer{i}"
-   #    peer_conf_path = os.path.join(peer_dir, f"peer{i}-wg0.conf")
-   #    peer_private_key_path = os.path.join(peer_dir, f"peer{i}-private.key")
-   #    peer_public_key_path = os.path.join(peer_dir, f"peer{i}-public.key")
-   #    peer_conf_qr_path = os.path.join(peer_dir, f"peer{i}-conf.qr.ascii.txt")
-      
-   #    print(f"PEER {i}: creating")
-   #    os.mkdir(peer_dir)
-      
-   #    # Public, Private keys
-   #    peer_private_key = ccu.RunCommandContainer("wg genkey").Check().std_out.strip()
-   #    peer_public_key = ccu.RunCommandContainer(f"bash -c 'echo \"{peer_private_key}\" | wg pubkey'").Check().std_out.strip()
-   #    peer_ip4 = f"{ip_v4_str}.{(i+1)}"
-   #    peer_ip6 = f"{ip_v6_str}::{(i+1)}"
-   #    ccu.file_write(path=peer_private_key_path, contents=peer_private_key, permission_bits=0o600)
-   #    ccu.file_write(path=peer_public_key_path, contents=peer_public_key, permission_bits=0o600)
-      
-   #    # Conf with dns
-   #    # Note: 0.0.0.0/0, ::/0 means all traffic will must go through the vpn connection
-   #    # Not specifying the server's dns will cause an ip leak
-   #    # 0.0.0.0/0, ::/0 also means that the kill switch feature becomes active
-   #    peer_conf = f"""
-   #       [Interface]
-   #       PrivateKey = {peer_private_key}
-   #       Address = {peer_ip4}/24, {peer_ip6}/64
-   #       DNS = {dns_ip_list}
-         
-   #       [Peer]
-   #       PublicKey = {public_key}
-   #       AllowedIPs = 0.0.0.0/0, ::/0
-   #       Endpoint = {SRV_ADDR}:{PORT}
-   #    """
-   #    peer_conf = "\n".join( [l.strip() for l in peer_conf.splitlines()] ).strip()
-   #    peer_conf_print= "\n".join(f"   CONF (P)>  {l}" for l in peer_conf.replace(private_key, "...PRIVATE_KEY...").splitlines())
-   #    print(f"Writing config: \n{peer_conf}")
-   #    ccu.file_write(path=peer_conf_path, contents=peer_conf, permission_bits=0o600)
-      
-   #    ccu.RunCommandContainer(f"wg set wg0 peer {peer_public_key} allowed-ips {peer_ip4},{peer_ip6}").Check()
-   #    ccu.RunCommandContainer(f"qrencode -t ansiutf8 -r \"{peer_conf_path}\" -o \"{peer_conf_qr_path}\"")
-   # # endregion
