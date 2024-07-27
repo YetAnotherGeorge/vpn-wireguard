@@ -1,0 +1,13 @@
+services:
+  ubuntu-test:
+    build:
+      context: .
+    image: ih-wireguard
+    container_name: ih-wireguard
+    network_mode: 'host'
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE #optional
+    ports:
+      - 51820:51820
+    restart: unless-stopped
