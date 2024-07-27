@@ -1,0 +1,6 @@
+{
+   "server_address": "...",
+   "server_port": 51820,
+   "server_peer_count": 3,
+   "default_interface": "eth0"
+}
