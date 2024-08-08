@@ -16,7 +16,7 @@ import custom_cmd_util as ccu
 import json
 
 def main():
-      #region INIT
+   #region INIT
    PATH_CONF = os.path.realpath("./config.private.json")
    PATH_CONF_TEMPLATE = os.path.realpath("./config.template.json")
    if not os.path.exists(PATH_CONF):
