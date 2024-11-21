@@ -26,6 +26,7 @@ def main():
       print(f"Fill out {PATH_CONF}, then run this app again.")
       return 0
 
+   #read config
    conf = json.loads(ccu.file_read(PATH_CONF))
    SERVER_ADDR = str(conf["server_address"])
    SERVER_PORT = int(conf["server_port"])
@@ -42,6 +43,9 @@ def main():
    if ccu.RunCommandContainer("dpkg -l wireguard", True).return_code != 0:
       print(f"Wireguard is not installed")
       ccu.RunCommandContainer("apt install wireguard -y").Check()
+   else:
+      print(f"Wireguard is installed -> wg down")
+      ccu.RunCommandContainer("wg-quick down wg0").Check()
    
    # Install qrencode
    if ccu.RunCommandContainer("dpkg -l qrencode", True).return_code != 0:
