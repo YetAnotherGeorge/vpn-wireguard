@@ -49,7 +49,7 @@ def main():
       RCC("apt install wireguard -y").Check()
    else:
       print(f"Wireguard is installed -> wg down")
-      RCC("wg-quick down wg0").Check()
+      RCC("wg-quick down wg0")
    
    # Install qrencode
    if RCC("dpkg -l qrencode", True).return_code != 0:
@@ -80,7 +80,7 @@ def main():
       any_change = True
       
    if any_change:
-      ubuntuutils.uu_io.file_write(sysctl_path, sysctl_contents)
+      ubuntuutils.uu_io.file_write_utf8(sysctl_path, sysctl_contents)
       print(f"Wrote new sysctl config")
       RCC("sysctl -p").Check()
    #endregion
@@ -99,20 +99,21 @@ def main():
    #region Configure Wireguard
    RCC("systemctl stop wg-quick@wg0")
    wireguard_path = "/etc/wireguard"
-   conf_path = os.path.join(wireguard_path, "wg0.conf") # CONF DIR IS COMPLETELY REMOVED ON EVERY RUN
-   private_key_path = os.path.join(wireguard_path, "private.key")
-   public_key_path = os.path.join(wireguard_path, "public.key")
    if not os.path.exists(wireguard_path):
       raise Exception(f"wireguard folder missing: {wireguard_path}")
    print(f"Removing contents of \"{wireguard_path}\" directory...")
    ubuntuutils.uu_io.clear_directory(wireguard_path)
    
+   # Paths for level 0 items: conf, wireguard private, public keys
+   conf_path = os.path.join(wireguard_path, "wg0.conf") # CONF DIR IS COMPLETELY REMOVED ON EVERY RUN
+   private_key_path = os.path.join(wireguard_path, "private.key")
+   public_key_path = os.path.join(wireguard_path, "public.key")
+   # Write private and public keys
    private_key: str = RCC("wg genkey").Check().std_out.strip()
    public_key: str = RCC(f"bash -c 'echo \"{private_key}\" | wg pubkey'").Check().std_out.strip()
-   ubuntuutils.uu_io.file_write(path=private_key_path, contents=private_key, permission_bits=0o600)
-   ubuntuutils.uu_io.file_write(path=public_key_path, contents=public_key, permission_bits=0o600)
+   ubuntuutils.uu_io.file_write_utf8(path=private_key_path, contents=private_key, permission_bits=0o600)
+   ubuntuutils.uu_io.file_write_utf8(path=public_key_path, contents=public_key, permission_bits=0o600)
    print(f"SRV Private Key: {re.sub('.', '*', private_key)} | SRV Public Key: {public_key}")
-   
    
    # ip_v4_str.PEER_NUM for ip generation
    ip_v4_str = "10." + ".".join( str(random.randint(0, 255)) for _ in range(2) )
@@ -137,10 +138,9 @@ def main():
    wg0_conf = "\n".join( [l.strip() for l in wg0_conf.splitlines()] ).strip()
    wg0_conf_print= "\n".join(f"   CONF>  {l}" for l in wg0_conf.replace(private_key, "...PRIVATE_KEY...").splitlines())
    print(f"Writing config: \n{wg0_conf_print}")
-   ubuntuutils.uu_io.file_write(path=conf_path, contents=wg0_conf)
+   ubuntuutils.uu_io.file_write_utf8(path=conf_path, contents=wg0_conf)
    
-   RCC("systemctl enable wg-quick@wg0").Check()
-   RCC("systemctl restart wg-quick@wg0").Check()
+  
    #endregion
    
    #region Configure Wireguard Peers
@@ -159,8 +159,8 @@ def main():
       peer_public_key = RCC(f"bash -c 'echo \"{peer_private_key}\" | wg pubkey'").Check().std_out.strip()
       peer_ip4 = f"{ip_v4_str}.{(i+1)}"
       peer_ip6 = f"{ip_v6_str}::{(i+1)}"
-      ubuntuutils.uu_io.file_write(path=peer_private_key_path, contents=peer_private_key, permission_bits=0o600)
-      ubuntuutils.uu_io.file_write(path=peer_public_key_path, contents=peer_public_key, permission_bits=0o600)
+      ubuntuutils.uu_io.file_write_utf8(path=peer_private_key_path, contents=peer_private_key, permission_bits=0o600)
+      ubuntuutils.uu_io.file_write_utf8(path=peer_public_key_path, contents=peer_public_key, permission_bits=0o600)
       
       # Conf with dns
       # Note: 0.0.0.0/0, ::/0 means all traffic will must go through the vpn connection
@@ -180,12 +180,14 @@ def main():
       peer_conf = "\n".join( [l.strip() for l in peer_conf.splitlines()] ).strip()
       peer_conf_print= "\n".join(f"   CONF (P)>  {l}" for l in peer_conf.replace(private_key, "...PRIVATE_KEY...").splitlines())
       print(f"Writing config: \n{peer_conf_print}")
-      ubuntuutils.uu_io.file_write(path=peer_conf_path, contents=peer_conf, permission_bits=0o600)
+      ubuntuutils.uu_io.file_write_utf8(path=peer_conf_path, contents=peer_conf, permission_bits=0o600)
       
       RCC(f"wg set wg0 peer {peer_public_key} allowed-ips {peer_ip4},{peer_ip6}").Check()
       RCC(f"qrencode -t ansiutf8 -r \"{peer_conf_path}\" -o \"{peer_conf_qr_path}\"")
    #endregion
-   
+
+   RCC("systemctl enable wg-quick@wg0").Check()
+   RCC("systemctl restart wg-quick@wg0").Check()
    
 if __name__ == "__main__":
    main()
