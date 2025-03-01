@@ -140,7 +140,9 @@ def main():
    print(f"Writing config: \n{wg0_conf_print}")
    ubuntuutils.uu_io.file_write_utf8(path=conf_path, contents=wg0_conf)
    
-  
+   # make sure wg is running, otherwise cannot configure peers
+   RCC("systemctl enable wg-quick@wg0").Check()
+   RCC("systemctl restart wg-quick@wg0").Check()
    #endregion
    
    #region Configure Wireguard Peers
@@ -186,8 +188,7 @@ def main():
       RCC(f"qrencode -t ansiutf8 -r \"{peer_conf_path}\" -o \"{peer_conf_qr_path}\"")
    #endregion
 
-   RCC("systemctl enable wg-quick@wg0").Check()
-   RCC("systemctl restart wg-quick@wg0").Check()
+  
    
 if __name__ == "__main__":
    main()
