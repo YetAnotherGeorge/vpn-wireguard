@@ -1,4 +1,3 @@
 __pycache__/
 .venv/
-local-packages/
 config.private.json
