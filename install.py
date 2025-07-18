@@ -4,7 +4,6 @@
 # DESCRIPTION Make sure the server is accessible with ufw enabled before running this script
 
 import os
-import shutil
 import re
 import random
 import ubuntuutils # type: ignore
@@ -18,11 +17,7 @@ def main():
    PATH_CONF = os.path.realpath("./config.private.json")
    PATH_CONF_TEMPLATE = os.path.realpath("./config.template.json")
    if not os.path.exists(PATH_CONF):
-      if not os.path.exists(PATH_CONF_TEMPLATE):
-         raise Exception(f"Template config file missing: {PATH_CONF_TEMPLATE}")
-      shutil.copyfile(PATH_CONF_TEMPLATE, PATH_CONF)
-      print(f"Fill out {PATH_CONF}, then run this app again.")
-      return 0
+      raise Exception(f"Private config file missing: {PATH_CONF_TEMPLATE}")
 
    #read config
    conf = json.loads(ubuntuutils.uu_io.file_read(PATH_CONF))
