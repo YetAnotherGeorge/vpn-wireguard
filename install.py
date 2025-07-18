@@ -3,18 +3,13 @@
 # DESCRIPTION Uses systemd wg-quick service
 # DESCRIPTION Make sure the server is accessible with ufw enabled before running this script
 
-import subprocess
-import shlex
 import os
-import pwd
-import grp
 import shutil
-import time
 import re
 import random
-import ubuntuutils;
-import ubuntuutils.uu_io
-from ubuntuutils.uu_run_command_container import RCC
+import ubuntuutils # type: ignore
+import ubuntuutils.uu_io # type: ignore
+from ubuntuutils.uu_run_command_container import RCC # type: ignore
 import json
 
 
@@ -30,7 +25,6 @@ def main():
       return 0
 
    #read config
-   ubuntuutils.uu_run_command_container.RCC
    conf = json.loads(ubuntuutils.uu_io.file_read(PATH_CONF))
    SERVER_ADDR = str(conf["server_address"])
    SERVER_PORT = int(conf["server_port"])
@@ -91,8 +85,10 @@ def main():
       raise Exception(f"No such default interface: \"{INTERFACE}\"")
    
    # GRAB DNS
-   dns_ip_list = RCC(f"resolvectl dns {INTERFACE}").Check().std_out
-   dns_ip_list_match = re.match(r"Link \s* \d \s* \( [^\)]+ \)\:\s* (?P<di> .+? ) $", dns_ip_list, re.X | re.M)
+   dns_ip_list: str = RCC(f"resolvectl dns {INTERFACE}").Check().std_out
+   dns_ip_list_match: re.Match[str] | None = re.match(r"Link \s* \d \s* \( [^\)]+ \)\:\s* (?P<di> .+? ) $", dns_ip_list, re.X | re.M)
+   if dns_ip_list_match is None:
+      raise Exception(f"Cannot parse DNS IP list from: \"{dns_ip_list}\"")
    dns_ip_list = ", ".join( dns_ip_list_match.group("di").split(" ") )
    print(f"DNS IP LIST: \"{dns_ip_list}\"")
    
@@ -188,7 +184,5 @@ def main():
       RCC(f"qrencode -t ansiutf8 -r \"{peer_conf_path}\" -o \"{peer_conf_qr_path}\"")
    #endregion
 
-  
-   
 if __name__ == "__main__":
    main()
